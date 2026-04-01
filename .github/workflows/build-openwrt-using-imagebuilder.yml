@@ -8,6 +8,9 @@
 
 name: Build OpenWrt using ImageBuilder
 
+permissions:
+  contents: write
+
 on:
   repository_dispatch:
   workflow_dispatch:
