@@ -202,23 +202,28 @@ rebuild_firmware() {
     # Selecting default packages, lib, theme, app and i18n, etc.
     my_packages="\
         acpid attr base-files bash bc blkid block-mount blockd bsdtar btrfs-progs busybox bzip2 \
-        cgi-io chattr comgt comgt-ncm containerd coremark coreutils coreutils-base64 coreutils-nohup \
+        cgi-io chattr containerd coremark coreutils coreutils-base64 coreutils-nohup \
         coreutils-truncate curl docker docker-compose dockerd dosfstools dumpe2fs e2freefrag e2fsprogs \
-        exfat-mkfs f2fs-tools f2fsck fdisk gawk getopt git gzip hostapd-common iconv iw iwinfo jq \
-        jshn kmod-brcmfmac kmod-brcmutil kmod-cfg80211 kmod-mac80211 libjson-script liblucihttp \
+        exfat-mkfs f2fs-tools f2fsck fdisk gawk getopt git gzip  iconv jq \
+        jshn  libjson-script liblucihttp \
         liblucihttp-lua losetup lsattr lsblk lscpu mkf2fs mount-utils openssl-util parted \
         perl-http-date perlbase-file perlbase-getopt perlbase-time perlbase-unicode perlbase-utf8 \
         pigz ppp ppp-mod-pppoe pv rename resize2fs runc tar tini ttyd tune2fs \
-        uclient-fetch uhttpd uhttpd-mod-ubus unzip uqmi usb-modeswitch uuidgen wget-ssl whereis \
-        which wpad-basic wwan xfs-fsck xfs-mkfs xz xz-utils ziptool zoneinfo-asia zoneinfo-core zstd \
+        uclient-fetch nginx-ssl luci-ssl-nginx unzip usb-modeswitch uuidgen wget-ssl whereis \
+        which wwan xfs-fsck xfs-mkfs xz xz-utils ziptool zoneinfo-asia zoneinfo-core zstd \
         \
-        luci luci-base luci-compat luci-i18n-base-zh-cn luci-lib-base \
+        luci luci-base luci-compat luci-i18n-base-zh-cn luci-lib-base luci-lib-docker \
         luci-lib-ip luci-lib-ipkg luci-lib-jsonc luci-lib-nixio luci-mod-admin-full luci-mod-network \
         luci-mod-status luci-mod-system luci-proto-3g luci-proto-ipip luci-proto-ipv6 \
-        luci-proto-ncm luci-proto-openconnect luci-proto-ppp luci-proto-qmi luci-proto-relay \
-        \
-        luci-app-amlogic luci-i18n-amlogic-zh-cn \
-        \
+        luci-app-upnp luci-app-ddns luci-app-wol luci-app-diskman luci-app-nlbwmon luci-app-samba4 luci-app-hd-idle luci-app-aria2 luci-app-qbittorrent luci-app-watchcat luci-app-dockerman luci-app-sqm luci-app-msd_lite luci-app-openclash \
+        kmod-usb-net-rndis kmod-hwmon-gpiofan adguardhome ddns-scripts-cloudflare openssh-sftp-server luci-proto-wireguard kmod-tcp-bbr kmod-bonding kmod-vrf  \
+        luci-app-amlogic  \
+        tcpdump nmap iperf3 ethtool hping3 openvpn-openssl sudo screen tree lsof diffutils redis-server mariadb-server mariadb-client \
+        luci-i18n-samba4-zh-cn luci-i18n-aria2-zh-cn luci-i18n-qbittorrent-zh-cn \
+        luci-i18n-diskman-zh-cn luci-i18n-hd-idle-zh-cn openvpn-openssl \
+        luci-i18n-sqm-zh-cn luci-i18n-watchcat-zh-cn luci-i18n-nlbwmon-zh-cn \
+        luci-i18n-msd_lite-zh-cn rsync openssh-client \
+        vim-full bind-dig ntfs-3g ntfs3-mount \
         ${config_list} \
         "
 
