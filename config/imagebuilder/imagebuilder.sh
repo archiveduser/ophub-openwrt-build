@@ -215,11 +215,11 @@ rebuild_firmware() {
         luci luci-base luci-compat luci-i18n-base-zh-cn luci-lib-base luci-lib-docker \
         luci-lib-ip luci-lib-ipkg luci-lib-jsonc luci-lib-nixio luci-mod-admin-full luci-mod-network \
         luci-mod-status luci-mod-system luci-proto-3g luci-proto-ipip luci-proto-ipv6 \
-        luci-app-upnp luci-app-ddns luci-app-wol luci-app-diskman luci-app-nlbwmon luci-app-samba4 luci-app-hd-idle luci-app-aria2 luci-app-qbittorrent luci-app-watchcat luci-app-dockerman luci-app-sqm luci-app-msd_lite luci-app-openclash \
+        luci-app-upnp luci-app-ddns luci-app-wol luci-app-diskman luci-app-nlbwmon luci-app-samba4 luci-app-hd-idle  luci-app-watchcat luci-app-dockerman luci-app-sqm luci-app-msd_lite luci-app-openclash \
         kmod-usb-net-rndis kmod-hwmon-gpiofan adguardhome ddns-scripts-cloudflare openssh-sftp-server luci-proto-wireguard kmod-tcp-bbr kmod-bonding kmod-vrf  \
-        luci-app-amlogic  \
+        luci-app-amlogic shadow-useradd \
         tcpdump nmap iperf3 ethtool hping3 openvpn-openssl sudo screen tree lsof diffutils redis-server mariadb-server mariadb-client \
-        luci-i18n-samba4-zh-cn luci-i18n-aria2-zh-cn luci-i18n-qbittorrent-zh-cn \
+        luci-i18n-samba4-zh-cn  \
         luci-i18n-diskman-zh-cn luci-i18n-hd-idle-zh-cn openvpn-openssl \
         luci-i18n-sqm-zh-cn luci-i18n-watchcat-zh-cn luci-i18n-nlbwmon-zh-cn \
         luci-i18n-msd_lite-zh-cn rsync openssh-client \
