@@ -361,7 +361,7 @@ jobs:
           df -hT ${PWD}
           echo "status=success" >> ${GITHUB_OUTPUT}
 
-      - name: Upload OpenWrt rootfs to Release
+      - name: Upload OpenWrt rootfs and packages to Release
         uses: ncipollo/release-action@main
         if: ${{ steps.imagebuilder.outputs.status == 'success' && !cancelled() }}
         with:
@@ -409,3 +409,6 @@ jobs:
             ### Applicable Platform
             - 🐧 `arm64`
             - 🐋 Docker image: https://hub.docker.com/u/ophub
+            ### Packages Repository
+            - Download `openwrt-packages-*.tar.gz` to set up a local opkg software source
+            - Extract and serve via HTTP, then add to OpenWrt: `src/gz custom http://your-server-ip/packages`

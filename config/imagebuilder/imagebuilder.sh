@@ -235,6 +235,91 @@ rebuild_firmware() {
     echo -e "${INFO} Firmware build completed successfully."
 }
 
+# Collect packages and generate opkg repository index
+collect_packages() {
+    cd ${imagebuilder_path}
+    echo -e "${STEPS} Collecting packages for opkg repository..."
+
+    # Find all package directories in the build output
+    local packages_dir="${tmp_path}/packages"
+    mkdir -p "${packages_dir}"
+
+    # Collect packages from bin/packages/ (architecture-specific packages)
+    local bin_packages_dirs=($(find bin/packages -type f \( -name "*.ipk" -o -name "*.apk" \) -exec dirname {} \; 2>/dev/null | sort -u))
+    # Also collect from bin/targets/ (target-specific packages like kmod)
+    local bin_targets_dirs=($(find bin/targets -type f \( -name "*.ipk" -o -name "*.apk" \) -exec dirname {} \; 2>/dev/null | sort -u))
+
+    local all_dirs=("${bin_packages_dirs[@]}" "${bin_targets_dirs[@]}")
+
+    if [[ ${#all_dirs[@]} -eq 0 ]]; then
+        echo -e "${WARNING} No package files found in build output."
+        return 0
+    fi
+
+    # Copy all ipk/apk files to a flat collection directory
+    local ipk_count=0
+    for dir in "${all_dirs[@]}"; do
+        for pkg in "${dir}"/*.ipk "${dir}"/*.apk; do
+            [[ -f "${pkg}" ]] || continue
+            # Use the subdirectory structure as part of the path to avoid name collisions
+            local subdir="${dir#bin/}"
+            local target_dir="${packages_dir}/${subdir}"
+            mkdir -p "${target_dir}"
+            cp -f "${pkg}" "${target_dir}/"
+            ipk_count=$((ipk_count + 1))
+        done
+    done
+
+    echo -e "${INFO} Collected ${ipk_count} package files."
+
+    # Generate opkg package index files
+    # For OPKG-based builds, generate Packages.gz; for APK-based, the format differs
+    if grep -q "CONFIG_USE_APK=y" .config; then
+        echo -e "${INFO} APK-based build detected, skipping opkg index generation."
+        # For APK repos, just archive the packages as-is
+    else
+        echo -e "${INFO} Generating opkg package indexes..."
+        # Generate Packages index for each subdirectory
+        for subdir in "${packages_dir}"/*/; do
+            [[ -d "${subdir}" ]] || continue
+            (cd "${subdir}" && {
+                for pkg in *.ipk; do
+                    [[ -f "${pkg}" ]] || continue
+                    # Extract control data from the ipk
+                    tmp_control=$(mktemp -d)
+                    tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.gz 2>/dev/null || \
+                    tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.xz 2>/dev/null || \
+                    tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.zst 2>/dev/null || true
+                    if [[ -f "${tmp_control}/control.tar.gz" ]]; then
+                        tar -xzf "${tmp_control}/control.tar.gz" -C "${tmp_control}" ./control 2>/dev/null || true
+                    elif [[ -f "${tmp_control}/control.tar.xz" ]]; then
+                        tar -xJf "${tmp_control}/control.tar.xz" -C "${tmp_control}" ./control 2>/dev/null || true
+                    elif [[ -f "${tmp_control}/control.tar.zst" ]]; then
+                        tar -I zstd -xf "${tmp_control}/control.tar.zst" -C "${tmp_control}" ./control 2>/dev/null || true
+                    fi
+                    if [[ -f "${tmp_control}/control" ]]; then
+                        echo "Filename: ${pkg}"
+                        cat "${tmp_control}/control"
+                        echo ""
+                    fi
+                    rm -rf "${tmp_control}"
+                done
+            } > Packages 2>/dev/null)
+            if [[ -f "${subdir}/Packages" ]]; then
+                gzip -9 -f "${subdir}/Packages"
+                echo -e "${INFO} Generated Packages.gz in ${subdir#${packages_dir}/}"
+            fi
+        done
+    fi
+
+    # Create the packages archive
+    local packages_archive="${output_path}/openwrt-packages-${op_sourse}-${op_branch}.tar.gz"
+    echo -e "${INFO} Archiving packages to ${packages_archive}..."
+    (cd "${tmp_path}" && tar -czpf "${packages_archive}" packages/)
+
+    echo -e "${INFO} Packages archive created: $(ls -lh "${packages_archive}" 2>/dev/null)"
+}
+
 # Custom settings after rebuild
 custom_settings() {
     cd ${imagebuilder_path}
@@ -287,10 +372,16 @@ custom_settings() {
     fi
 
     sync && sleep 3
-    cd ${make_path}
-    rm -rf "${imagebuilder_path}"
     echo -e "${INFO} [ ${output_path} ] directory contents: \n$(ls -lh ${output_path}/ 2>/dev/null)"
     echo -e "${INFO} Post-build customizations applied successfully."
+
+    # Collect packages before cleaning up the imagebuilder directory
+    collect_packages
+
+    # Now clean up
+    cd ${make_path}
+    rm -rf "${imagebuilder_path}"
+    echo -e "${INFO} [ ${output_path} ] final directory contents: \n$(ls -lh ${output_path}/ 2>/dev/null)"
 }
 
 # Show welcome message
