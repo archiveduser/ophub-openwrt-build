@@ -244,33 +244,31 @@ collect_packages() {
     local packages_dir="${tmp_path}/packages"
     mkdir -p "${packages_dir}"
 
-    # Collect packages from bin/packages/ (architecture-specific packages)
-    local bin_packages_dirs=($(find bin/packages -type f \( -name "*.ipk" -o -name "*.apk" \) -exec dirname {} \; 2>/dev/null | sort -u))
-    # Also collect from bin/targets/ (target-specific packages like kmod)
-    local bin_targets_dirs=($(find bin/targets -type f \( -name "*.ipk" -o -name "*.apk" \) -exec dirname {} \; 2>/dev/null | sort -u))
+    # Debug: show what's in the build output
+    echo -e "${INFO} Searching for packages in build output..."
+    [[ -d "bin/packages" ]] && echo -e "${INFO} bin/packages/ exists:" && ls bin/packages/ 2>/dev/null || echo -e "${INFO} bin/packages/ not found"
+    [[ -d "bin/targets" ]] && echo -e "${INFO} bin/targets/ exists:" && find bin/targets -maxdepth 3 -type d 2>/dev/null | head -20 || echo -e "${INFO} bin/targets/ not found"
 
-    local all_dirs=("${bin_packages_dirs[@]}" "${bin_targets_dirs[@]}")
-
-    if [[ ${#all_dirs[@]} -eq 0 ]]; then
-        echo -e "${WARNING} No package files found in build output."
-        return 0
-    fi
-
-    # Copy all ipk/apk files to a flat collection directory
+    # Collect all ipk/apk files from the entire bin/ directory tree
     local ipk_count=0
-    for dir in "${all_dirs[@]}"; do
-        for pkg in "${dir}"/*.ipk "${dir}"/*.apk; do
-            [[ -f "${pkg}" ]] || continue
-            # Use the subdirectory structure as part of the path to avoid name collisions
-            local subdir="${dir#bin/}"
-            local target_dir="${packages_dir}/${subdir}"
-            mkdir -p "${target_dir}"
-            cp -f "${pkg}" "${target_dir}/"
-            ipk_count=$((ipk_count + 1))
-        done
-    done
+    while IFS= read -r -d '' pkg; do
+        # Get the relative path from bin/ to preserve directory structure
+        local rel_path="${pkg#bin/}"
+        local rel_dir="$(dirname "${rel_path}")"
+        local target_dir="${packages_dir}/${rel_dir}"
+        mkdir -p "${target_dir}"
+        cp -f "${pkg}" "${target_dir}/"
+        ipk_count=$((ipk_count + 1))
+    done < <(find bin -type f \( -name "*.ipk" -o -name "*.apk" \) -print0 2>/dev/null || true)
 
     echo -e "${INFO} Collected ${ipk_count} package files."
+    echo -e "${INFO} Packages directory contents:"
+    find "${packages_dir}" -type f \( -name "*.ipk" -o -name "*.apk" \) 2>/dev/null | head -20
+
+    if [[ ${ipk_count} -eq 0 ]]; then
+        echo -e "${WARNING} No package files found in build output. Skipping archive creation."
+        return 0
+    fi
 
     # Generate opkg package index files
     # For OPKG-based builds, generate Packages.gz; for APK-based, the format differs
@@ -279,14 +277,21 @@ collect_packages() {
         # For APK repos, just archive the packages as-is
     else
         echo -e "${INFO} Generating opkg package indexes..."
-        # Generate Packages index for each subdirectory
-        for subdir in "${packages_dir}"/*/; do
+        # Generate Packages index for each subdirectory that contains ipk files
+        while IFS= read -r subdir; do
             [[ -d "${subdir}" ]] || continue
+            local has_ipk=false
+            for pkg in "${subdir}"/*.ipk; do
+                [[ -f "${pkg}" ]] && has_ipk=true && break
+            done
+            [[ "${has_ipk}" == "true" ]] || continue
+
             (cd "${subdir}" && {
                 for pkg in *.ipk; do
                     [[ -f "${pkg}" ]] || continue
                     # Extract control data from the ipk
                     tmp_control=$(mktemp -d)
+                    # ipk is a gzipped tar, contains data.tar.gz and control.tar.gz (or .xz/.zst)
                     tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.gz 2>/dev/null || \
                     tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.xz 2>/dev/null || \
                     tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.zst 2>/dev/null || true
@@ -309,7 +314,7 @@ collect_packages() {
                 gzip -9 -f "${subdir}/Packages"
                 echo -e "${INFO} Generated Packages.gz in ${subdir#${packages_dir}/}"
             fi
-        done
+        done < <(find "${packages_dir}" -type d -print0 2>/dev/null)
     fi
 
     # Create the packages archive
@@ -317,7 +322,11 @@ collect_packages() {
     echo -e "${INFO} Archiving packages to ${packages_archive}..."
     (cd "${tmp_path}" && tar -czpf "${packages_archive}" packages/)
 
-    echo -e "${INFO} Packages archive created: $(ls -lh "${packages_archive}" 2>/dev/null)"
+    if [[ -f "${packages_archive}" ]]; then
+        echo -e "${SUCCESS} Packages archive created: $(ls -lh "${packages_archive}" 2>/dev/null)"
+    else
+        echo -e "${ERROR} Failed to create packages archive."
+    fi
 }
 
 # Custom settings after rebuild
