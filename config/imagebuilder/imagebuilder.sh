@@ -240,58 +240,126 @@ collect_packages() {
     cd ${imagebuilder_path}
     echo -e "${STEPS} Collecting packages for opkg repository..."
 
-    # Find all package directories in the build output
     local packages_dir="${tmp_path}/packages"
     mkdir -p "${packages_dir}"
 
-    # Debug: show what's in the build output
-    echo -e "${INFO} Searching for packages in build output..."
-    [[ -d "bin/packages" ]] && echo -e "${INFO} bin/packages/ exists:" && ls bin/packages/ 2>/dev/null || echo -e "${INFO} bin/packages/ not found"
-    [[ -d "bin/targets" ]] && echo -e "${INFO} bin/targets/ exists:" && find bin/targets -maxdepth 3 -type d 2>/dev/null | head -20 || echo -e "${INFO} bin/targets/ not found"
-
-    # Collect all ipk/apk files from the entire bin/ directory tree
+    # First, try to find .ipk/.apk files in the entire imagebuilder directory
+    echo -e "${INFO} Searching for package files in imagebuilder directory..."
     local ipk_count=0
     while IFS= read -r -d '' pkg; do
-        # Get the relative path from bin/ to preserve directory structure
-        local rel_path="${pkg#bin/}"
+        local rel_path="${pkg#${imagebuilder_path}/}"
         local rel_dir="$(dirname "${rel_path}")"
         local target_dir="${packages_dir}/${rel_dir}"
         mkdir -p "${target_dir}"
         cp -f "${pkg}" "${target_dir}/"
         ipk_count=$((ipk_count + 1))
-    done < <(find bin -type f \( -name "*.ipk" -o -name "*.apk" \) -print0 2>/dev/null || true)
+    done < <(find "${imagebuilder_path}" -type f \( -name "*.ipk" -o -name "*.apk" \) \
+        -not -path "*/tmp/*" -not -path "*/dl/*" -print0 2>/dev/null || true)
 
-    echo -e "${INFO} Collected ${ipk_count} package files."
-    echo -e "${INFO} Packages directory contents:"
-    find "${packages_dir}" -type f \( -name "*.ipk" -o -name "*.apk" \) 2>/dev/null | head -20
+    echo -e "${INFO} Found ${ipk_count} package files in imagebuilder directory."
 
-    if [[ ${ipk_count} -eq 0 ]]; then
-        echo -e "${WARNING} No package files found in build output. Skipping archive creation."
-        return 0
-    fi
+    # If no package files found in build output, extract from the built rootfs
+    if [[ ${ipk_count} -eq 0 ]] && [[ -d "${unpack_path}" ]]; then
+        echo -e "${INFO} No package files in build output. Extracting package list from rootfs..."
 
-    # Generate opkg package index files
-    # For OPKG-based builds, generate Packages.gz; for APK-based, the format differs
-    if grep -q "CONFIG_USE_APK=y" .config; then
-        echo -e "${INFO} APK-based build detected, skipping opkg index generation."
-        # For APK repos, just archive the packages as-is
-    else
-        echo -e "${INFO} Generating opkg package indexes..."
-        # Generate Packages index for each subdirectory that contains ipk files
-        while IFS= read -r subdir; do
-            [[ -d "${subdir}" ]] || continue
+        # Get the list of installed packages from the rootfs opkg status file
+        local opkg_status="${unpack_path}/usr/lib/opkg/status"
+        local apk_installed="${unpack_path}/lib/apk/db/installed"
+        local pkg_list_file="${tmp_path}/installed_packages.list"
+
+        if [[ -f "${opkg_status}" ]]; then
+            # OPKG format: extract package names
+            grep "^Package:" "${opkg_status}" | awk '{print $2}' > "${pkg_list_file}"
+            echo -e "${INFO} Found $(wc -l < "${pkg_list_file}") installed packages (OPKG)."
+        elif [[ -f "${apk_installed}" ]]; then
+            # APK format: extract package names
+            grep "^P:" "${apk_installed}" | awk '{print $2}' > "${pkg_list_file}"
+            echo -e "${INFO} Found $(wc -l < "${pkg_list_file}") installed packages (APK)."
+        else
+            echo -e "${WARNING} No package manager status file found in rootfs."
+            return 0
+        fi
+
+        # Determine the base repository URL and feed list
+        local repo_base=""
+        local arch="aarch64_generic"
+        local feeds="base luci packages routing telephony"
+        if [[ "${op_sourse}" == "immortalwrt" ]]; then
+            repo_base="https://downloads.immortalwrt.org/releases/${op_branch}/packages/${arch}"
+        else
+            repo_base="https://downloads.openwrt.org/releases/${op_branch}/packages/${arch}"
+        fi
+
+        # Download Packages index from each feed and build a combined lookup
+        local combined_index="${tmp_path}/combined_packages.index"
+        : > "${combined_index}"
+        for feed in ${feeds}; do
+            local feed_url="${repo_base}/${feed}"
+            local feed_pkg="${tmp_path}/Packages_${feed}"
+            echo -e "${INFO} Downloading package index from ${feed}/..."
+            if curl -fsSL "${feed_url}/Packages.gz" -o "${feed_pkg}.gz" 2>/dev/null; then
+                gunzip -f "${feed_pkg}.gz" 2>/dev/null || true
+                awk -v feed="${feed}" '
+                    /^Package:/ { pkg=$2 }
+                    /^Filename:/ { print pkg " " feed " " $2 }
+                ' "${feed_pkg}" >> "${combined_index}"
+                rm -f "${feed_pkg}"
+            fi
+        done
+
+        local index_count=$(wc -l < "${combined_index}")
+        echo -e "${INFO} Combined index has ${index_count} package entries."
+
+        if [[ ${index_count} -eq 0 ]]; then
+            echo -e "${WARNING} Failed to download any package indexes."
+            return 0
+        fi
+
+        # Download each installed package from the correct feed
+        local downloaded=0
+        local failed=0
+        local skipped=0
+        while IFS= read -r pkg_name; do
+            [[ -z "${pkg_name}" ]] && continue
+            local match=""
+            match=$(grep "^${pkg_name} " "${combined_index}" | head -n1)
+            if [[ -z "${match}" ]]; then
+                skipped=$((skipped + 1))
+                continue
+            fi
+
+            local feed_name=$(echo "${match}" | awk '{print $2}')
+            local pkg_filename=$(echo "${match}" | awk '{print $3}')
+            local feed_dir="${packages_dir}/${feed_name}"
+            mkdir -p "${feed_dir}"
+
+            local dl_url="${repo_base}/${feed_name}/${pkg_filename}"
+            local save_name="${pkg_filename##*/}"
+            if curl -fsSL "${dl_url}" -o "${feed_dir}/${save_name}" 2>/dev/null; then
+                downloaded=$((downloaded + 1))
+            else
+                failed=$((failed + 1))
+                rm -f "${feed_dir}/${save_name}"
+            fi
+        done < "${pkg_list_file}"
+
+        echo -e "${INFO} Downloaded: ${downloaded}, Failed: ${failed}, Skipped (not in repo): ${skipped}"
+
+        # Generate Packages index for each feed directory
+        for feed in ${feeds}; do
+            local feed_dir="${packages_dir}/${feed}"
+            [[ -d "${feed_dir}" ]] || continue
             local has_ipk=false
-            for pkg in "${subdir}"/*.ipk; do
+            for pkg in "${feed_dir}"/*.ipk; do
                 [[ -f "${pkg}" ]] && has_ipk=true && break
             done
             [[ "${has_ipk}" == "true" ]] || continue
 
-            (cd "${subdir}" && {
+            echo -e "${INFO} Generating package index for ${feed}/..."
+            (cd "${feed_dir}" && {
                 for pkg in *.ipk; do
                     [[ -f "${pkg}" ]] || continue
-                    # Extract control data from the ipk
                     tmp_control=$(mktemp -d)
-                    # ipk is a gzipped tar, contains data.tar.gz and control.tar.gz (or .xz/.zst)
                     tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.gz 2>/dev/null || \
                     tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.xz 2>/dev/null || \
                     tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.zst 2>/dev/null || true
@@ -310,22 +378,68 @@ collect_packages() {
                     rm -rf "${tmp_control}"
                 done
             } > Packages 2>/dev/null)
-            if [[ -f "${subdir}/Packages" ]]; then
-                gzip -9 -f "${subdir}/Packages"
-                echo -e "${INFO} Generated Packages.gz in ${subdir#${packages_dir}/}"
-            fi
-        done < <(find "${packages_dir}" -type d -print0 2>/dev/null)
+            gzip -9 -f "${feed_dir}/Packages"
+        done
+
+        # Clean up temporary files
+        rm -f "${combined_index}" "${pkg_list_file}" "${tmp_path}"/Packages_*
+    elif [[ ${ipk_count} -gt 0 ]]; then
+        # Generate opkg package index for collected files
+        if grep -q "CONFIG_USE_APK=y" .config 2>/dev/null; then
+            echo -e "${INFO} APK-based build detected, skipping opkg index generation."
+        else
+            echo -e "${INFO} Generating opkg package indexes..."
+            while IFS= read -r subdir; do
+                [[ -d "${subdir}" ]] || continue
+                local has_ipk=false
+                for pkg in "${subdir}"/*.ipk; do
+                    [[ -f "${pkg}" ]] && has_ipk=true && break
+                done
+                [[ "${has_ipk}" == "true" ]] || continue
+
+                (cd "${subdir}" && {
+                    for pkg in *.ipk; do
+                        [[ -f "${pkg}" ]] || continue
+                        tmp_control=$(mktemp -d)
+                        tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.gz 2>/dev/null || \
+                        tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.xz 2>/dev/null || \
+                        tar -xzf "${pkg}" -C "${tmp_control}" ./control.tar.zst 2>/dev/null || true
+                        if [[ -f "${tmp_control}/control.tar.gz" ]]; then
+                            tar -xzf "${tmp_control}/control.tar.gz" -C "${tmp_control}" ./control 2>/dev/null || true
+                        elif [[ -f "${tmp_control}/control.tar.xz" ]]; then
+                            tar -xJf "${tmp_control}/control.tar.xz" -C "${tmp_control}" ./control 2>/dev/null || true
+                        elif [[ -f "${tmp_control}/control.tar.zst" ]]; then
+                            tar -I zstd -xf "${tmp_control}/control.tar.zst" -C "${tmp_control}" ./control 2>/dev/null || true
+                        fi
+                        if [[ -f "${tmp_control}/control" ]]; then
+                            echo "Filename: ${pkg}"
+                            cat "${tmp_control}/control"
+                            echo ""
+                        fi
+                        rm -rf "${tmp_control}"
+                    done
+                } > Packages 2>/dev/null)
+                if [[ -f "${subdir}/Packages" ]]; then
+                    gzip -9 -f "${subdir}/Packages"
+                    echo -e "${INFO} Generated Packages.gz in ${subdir#${packages_dir}/}"
+                fi
+            done < <(find "${packages_dir}" -type d -print0 2>/dev/null)
+        fi
     fi
 
     # Create the packages archive
-    local packages_archive="${output_path}/openwrt-packages-${op_sourse}-${op_branch}.tar.gz"
-    echo -e "${INFO} Archiving packages to ${packages_archive}..."
-    (cd "${tmp_path}" && tar -czpf "${packages_archive}" packages/)
-
-    if [[ -f "${packages_archive}" ]]; then
-        echo -e "${SUCCESS} Packages archive created: $(ls -lh "${packages_archive}" 2>/dev/null)"
+    local pkg_file_count=$(find "${packages_dir}" -type f \( -name "*.ipk" -o -name "*.apk" \) 2>/dev/null | wc -l)
+    if [[ ${pkg_file_count} -gt 0 ]]; then
+        local packages_archive="${output_path}/openwrt-packages-${op_sourse}-${op_branch}.tar.gz"
+        echo -e "${INFO} Archiving ${pkg_file_count} packages to ${packages_archive}..."
+        (cd "${tmp_path}" && tar -czpf "${packages_archive}" packages/)
+        if [[ -f "${packages_archive}" ]]; then
+            echo -e "${SUCCESS} Packages archive created: $(ls -lh "${packages_archive}" 2>/dev/null)"
+        else
+            echo -e "${ERROR} Failed to create packages archive."
+        fi
     else
-        echo -e "${ERROR} Failed to create packages archive."
+        echo -e "${WARNING} No packages to archive. Skipping."
     fi
 }
 
