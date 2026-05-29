@@ -223,7 +223,7 @@ rebuild_firmware() {
         luci-i18n-diskman-zh-cn luci-i18n-hd-idle-zh-cn openvpn-openssl \
         luci-i18n-sqm-zh-cn luci-i18n-watchcat-zh-cn luci-i18n-nlbwmon-zh-cn \
         luci-i18n-msd_lite-zh-cn rsync openssh-client \
-        vim-full bind-dig ntfs-3g ntfs3-mount \
+        vim-full bind-dig ntfs-3g ntfs3-mount bluez-utils bluez-daemon \
         ${config_list} \
         "
 
